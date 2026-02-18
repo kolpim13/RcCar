@@ -15,13 +15,14 @@
 #include "sdkconfig.h"
 /*=============================================================*/
 
-// For debugging purpose
+// Module`s TAG for debugging purposess
 static const char *BLE_TAG = "BLE";
 /*=============================================================*/
 
 /* APPLICATION PROFILE 
     * SERVICE 1 - CONTROL (CTRL)
-        * CHARACTERISTIC 1 - SPEED [] [INT16] 
+        * CHAR 1 - POWER [READ | WRITE] [INT16] 
+        * CHAR 2 - STEARING [READ | WRITE] [INT16]
 */
 
 #define DEVICE_NAME         "RioCar"
@@ -30,7 +31,9 @@ static const char *BLE_TAG = "BLE";
 
 #define UUID_LEN            16
 
-// Randomly generated UUID: eb029cf2-7afe-4617-94b2-1ce44867b0fc
+#define SRVC_CONTROL_ID     0
+
+// Service CONTROL (CTRL) randomly generated UUID: eb029cf2-7afe-4617-94b2-1ce44867b0fc
 #define SVC_CTRL_BASE\      
     0xEB, 0x02, 0x9C, 0xF2,\
     0x7A, 0xFE,\
@@ -39,18 +42,22 @@ static const char *BLE_TAG = "BLE";
     0x1C, 0xE4, 0x48, 0x67, 0xB0
 static const uint8_t SVC_CTRL_UUID[UUID_LEN]                = { SVC_CTRL_BASE, 0x00 };
 static const uint8_t SVC_CTRL_CHAR_POWER_UUID[UUID_LEN]     = { SVC_CTRL_BASE, 0x01 };
+static const uint8_t SVC_CTRL_CHAR_STEARING_UUID[UUID_LEN]  = { SVC_CTRL_BASE, 0x02 };
 
 // User Description Descriptor UUID
 static const esp_bt_uuid_t user_desc_uuid = {
     .len = ESP_UUID_LEN_16,
     .uuid = { .uuid16 = ESP_GATT_UUID_CHAR_DESCRIPTION }  // 0x2901
 };
-static const char SVC_CTRL_CHAR_POWER_DESC[]  = "Power";
+static const char SVC_CTRL_CHAR_POWER_DESC[]        = "Power";
+// static const char SVC_CTRL_CHAR_STEARING_DESC[]     = "Stearing";
 
 // Attribute handlers
 static uint16_t svc_ctrl_handle                     = 0;
 static uint16_t svc_ctrl_char_power_handle          = 0;
 static uint16_t svc_ctrl_char_power_cccd_handle     = 0;    // Descriptor (Not used for now)
+static uint16_t svc_ctrl_char_stearing_handle       = 0;
+static uint16_t svc_ctrl_char_stearing_cccd_handle  = 0;    // Descriptor (Not used for now)
 
 // Connection related
 static esp_gatt_if_t g_gatts_if = ESP_GATT_IF_NONE;
@@ -59,6 +66,16 @@ static bool g_connected = false;
 
 // Test values to read/write - to be moved to another files (where they belong)
 static uint16_t power_value = 101; 
+/*=============================================================*/
+
+/* STATIC FUNCTIONS */
+static void add_characteristic(
+    uint16_t svc_handle,
+    const uint8_t* char_uuid, 
+    esp_gatt_char_prop_t properties, 
+    esp_attr_value_t* attr_value,
+    esp_gatt_perm_t permissions
+);
 /*=============================================================*/
 
 /* GAP
@@ -159,7 +176,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
             esp_gatt_srvc_id_t srvc_id = {
                 .is_primary = true,
                 .id = {
-                    .inst_id = 0,
+                    .inst_id = SRVC_CONTROL_ID,
                     .uuid = { .len = ESP_UUID_LEN_128 }
                 }
             };
@@ -178,34 +195,43 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
 
         case ESP_GATTS_CREATE_EVT: 
         {
-            /* Once service is created --> add characteristics to it. */
-            svc_ctrl_handle = param->create.service_handle;
-            ESP_LOGI(BLE_TAG, "GATTS: Service created handle=0x%04x", svc_ctrl_handle);
+            /* Get service was created */
+            if (param->create.service_id.id.inst_id == SRVC_CONTROL_ID)
+            {
+                /* Service Control */
 
-            esp_ble_gatts_start_service(svc_ctrl_handle);
+                // Update service handle --> start service
+                svc_ctrl_handle = param->create.service_handle;
+                ESP_LOGI(BLE_TAG, "GATTS: Service created handle=0x%04x", svc_ctrl_handle);
 
-            /* 1) Add "power" characteristic (Write) */
-            esp_bt_uuid_t power_uuid = { .len = ESP_UUID_LEN_128 };
-            memcpy(power_uuid.uuid.uuid128, SVC_CTRL_CHAR_POWER_UUID, 16);
+                esp_ble_gatts_start_service(svc_ctrl_handle);
 
-            esp_gatt_char_prop_t power_props =
-                ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE;
+                
+                /* Add Characteristics
+                    1. Power
+                    2. Stearing 
+                */
+                add_characteristic(
+                    svc_ctrl_handle,
+                    SVC_CTRL_CHAR_POWER_UUID,
+                    ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE,
+                    &((esp_attr_value_t){.attr_max_len = sizeof(int16_t) * 2, .attr_len = 0, .attr_value = NULL}),
+                    ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE
+                );
 
-            /* Characteristic initial value can be empty; we'll react to writes in WRITE_EVT. */
-            esp_attr_value_t power_val = {
-                .attr_max_len = 512,
-                .attr_len     = 0,
-                .attr_value   = NULL
-            };
-
-            esp_ble_gatts_add_char(
-                svc_ctrl_handle,
-                &power_uuid,
-                ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                power_props,
-                &power_val,
-                NULL
-            );
+                esp_attr_value_t stearing_val = {
+                    .attr_max_len = 4,
+                    .attr_len     = 0,
+                    .attr_value   = NULL
+                };
+                add_characteristic(
+                    svc_ctrl_handle,
+                    SVC_CTRL_CHAR_STEARING_UUID,
+                    ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE,
+                    &((esp_attr_value_t){.attr_max_len = sizeof(int16_t) * 2, .attr_len = 0, .attr_value = NULL}),
+                    ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE
+                );
+            }       
 
             break;
         }
@@ -218,6 +244,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
             const char *char_name = "Unknown";
             const esp_bt_uuid_t *uuid = &param->add_char.char_uuid;
 
+            /* */
             if (memcmp(uuid->uuid.uuid128, SVC_CTRL_CHAR_POWER_UUID, 16) == 0) 
             {
                 // Power does not require any notification
@@ -324,10 +351,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
         }
 
         case ESP_GATTS_WRITE_EVT: {
-            /* Client writes either:
-                * Control characteristic (steering/throttle/etc.)
-                * CCCD descriptor (enable/disable notifications)
-            */
             if (param->write.is_prep) {
                 /* Prepared writes are used for long writes; we keep it minimal and ignore. */
                 ESP_LOGW(BLE_TAG, "GATTS: Prepared write not supported in this minimal example");
@@ -341,10 +364,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                 power_value = *((uint16_t *)&param->write.value[0]);
                 ESP_LOGI(BLE_TAG, "Power value: %d", power_value);
 
-                /* If you use Write With Response, you should respond OK.
-                * If you use Write Without Response (Write NR), there is no response.
-                * ESP-IDF sets param->write.need_rsp for write-with-response cases.
-                */
                 if (param->write.need_rsp) {
                     esp_ble_gatts_send_response(
                         gatts_if,
@@ -427,5 +446,30 @@ void ble_initialize(void)
     }
 
     return;
+}
+/*=============================================================*/
+
+/* STATIC FUNCTIONS IMP)LEMENTATION */
+static void add_characteristic(
+    uint16_t svc_handle,
+    const uint8_t* char_uuid, 
+    esp_gatt_char_prop_t properties, 
+    esp_attr_value_t* attr_value,
+    esp_gatt_perm_t permissions
+)
+{
+    // Copy UUID
+    esp_bt_uuid_t uuid = { .len = ESP_UUID_LEN_128 };
+    memcpy(uuid.uuid.uuid128, char_uuid, 16);
+
+    // Add char
+    esp_ble_gatts_add_char(
+        svc_handle,
+        &uuid,
+        permissions,
+        properties,
+        attr_value,
+        NULL
+    );
 }
 /*=============================================================*/
