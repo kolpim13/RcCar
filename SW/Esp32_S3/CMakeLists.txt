@@ -5,6 +5,7 @@ cmake_minimum_required(VERSION 3.16)
 # Set extra components folder
 set(EXTRA_COMPONENT_DIRS 
     "${CMAKE_CURRENT_LIST_DIR}/modules"
+    "${CMAKE_CURRENT_LIST_DIR}/platform"
 )
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)

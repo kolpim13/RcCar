@@ -1,0 +1,6 @@
+idf_component_register(
+    SRCS "TB6612FNG.c"
+    INCLUDE_DIRS "."
+    REQUIRES esp_driver_gpio esp_driver_ledc
+    PRIV_REQUIRES config
+)
