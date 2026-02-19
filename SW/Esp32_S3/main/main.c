@@ -8,30 +8,10 @@
 #include "nvs_flash.h"
 
 #include "ble.h"
-
-#include "hw_config.h"
-#include "TB6612FNG.h"
-#include "servo.h"
+#include "car.h"
 /*=============================================================*/
 
 /* STATIC RESOURCES */
-static TB6612FNG_t motor_driver = {
-    .AIN1 = TB6612_AIN1_GPIO_MASK,
-    .AIN2 = TB6612_AIN2_GPIO_MASK,
-    .PWMA = TB6612_PWMA_GPIO_MASK,
-    .BIN1 = GPIO_NO,
-    .BIN2 = GPIO_NO,
-    .PWMB = GPIO_NO,
-};
-
-static ServoMotor_t servo = {
-    .pwm_freq_hz = SERVO_LEDC_PWM_FREQ_HZ,
-    .ledc_channel = SERVO_PWM_LEDC_CHANNEL,
-    .min_pulse_width_us = SERVO_MIN_PULSE_WIDTH_US,
-    .max_pulse_width_us = SERVO_MAX_PULSE_WIDTH_US,
-    .min_angle_deg = SERVO_MIN_ANGLE_DEG,
-    .max_angle_deg = SERVO_MAX_ANGLE_DEG,
-};
 /*=============================================================*/
 
 /* FreeRTOS
@@ -67,11 +47,8 @@ void app_main(void)
     // BLE Stack
     ble_initialize();
 
-    // Motor driver
-    //TB6612FNG_Init(&motor_driver);
-
-    // Servo motor
-    servo_init(&servo, SERVO_LEDC_TIMER, SERVO_PWM_GPIO);
+    // Initialize whole platform
+    platform_init();
 
     // Create FreeRTOS tasks
     xTaskCreatePinnedToCore(
@@ -80,7 +57,7 @@ void app_main(void)
         4096,
         NULL,
         5,
-        &Task_Handle_Cyclic_10ms,
+        &Task_Handle_Main,
         CORE_1
     );
 

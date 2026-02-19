@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.c"
+    SRCS "car.c"
     INCLUDE_DIRS "."
-    REQUIRES config ble car
+    REQUIRES config servo
 )
