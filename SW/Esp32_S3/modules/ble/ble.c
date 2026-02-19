@@ -13,6 +13,8 @@
 #include "esp_bt_main.h"
 #include "esp_gatt_common_api.h"
 #include "sdkconfig.h"
+
+#include "car.h"
 /*=============================================================*/
 
 // Module`s TAG for debugging purposess
@@ -50,7 +52,7 @@ static const esp_bt_uuid_t user_desc_uuid = {
     .uuid = { .uuid16 = ESP_GATT_UUID_CHAR_DESCRIPTION }  // 0x2901
 };
 static const char SVC_CTRL_CHAR_POWER_DESC[]        = "Power";
-// static const char SVC_CTRL_CHAR_STEARING_DESC[]     = "Stearing";
+//static const char SVC_CTRL_CHAR_STEARING_DESC[]     = "Stearing";
 
 // Attribute handlers
 static uint16_t svc_ctrl_handle                     = 0;
@@ -198,7 +200,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
             /* Get service was created */
             if (param->create.service_id.id.inst_id == SRVC_CONTROL_ID)
             {
-                /* Service Control */
+                // Service Control
 
                 // Update service handle --> start service
                 svc_ctrl_handle = param->create.service_handle;
@@ -219,11 +221,6 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE
                 );
 
-                esp_attr_value_t stearing_val = {
-                    .attr_max_len = 4,
-                    .attr_len     = 0,
-                    .attr_value   = NULL
-                };
                 add_characteristic(
                     svc_ctrl_handle,
                     SVC_CTRL_CHAR_STEARING_UUID,
@@ -231,6 +228,10 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                     &((esp_attr_value_t){.attr_max_len = sizeof(int16_t) * 2, .attr_len = 0, .attr_value = NULL}),
                     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE
                 );
+            }
+            else
+            {
+                ESP_LOGE(BLE_TAG, "GATTS: Unknown service = 0x%04x created", svc_ctrl_handle);
             }       
 
             break;
@@ -244,7 +245,7 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
             const char *char_name = "Unknown";
             const esp_bt_uuid_t *uuid = &param->add_char.char_uuid;
 
-            /* */
+            /* Assign corresponding handle to each characteristic */
             if (memcmp(uuid->uuid.uuid128, SVC_CTRL_CHAR_POWER_UUID, 16) == 0) 
             {
                 // Power does not require any notification
@@ -252,11 +253,18 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
                 svc_ctrl_char_power_handle = param->add_char.attr_handle;
                 ESP_LOGI(BLE_TAG, "GATTS: Control char added handle=0x%04x", svc_ctrl_char_power_handle);
             }
+            else if (memcmp(uuid->uuid.uuid128, SVC_CTRL_CHAR_STEARING_UUID, 16) == 0) 
+            {
+                // Stearing does not require any notification
+                char_name = SVC_CTRL_CHAR_POWER_DESC;
+                svc_ctrl_char_stearing_handle = param->add_char.attr_handle;
+                ESP_LOGI(BLE_TAG, "GATTS: Control char added handle=0x%04x", svc_ctrl_char_stearing_handle);
+            }
 
             // Set descriptor name
             esp_attr_value_t desc_val = {
                 .attr_max_len = sizeof(char_name),
-                .attr_len     = sizeof(char_name) - 1,
+                .attr_len     = 0,
                 .attr_value   = (uint8_t*)char_name,
             };
 
@@ -313,40 +321,49 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
 
         case ESP_GATTS_READ_EVT: 
         {
-            /* Occures on event - Client read some characteristic */
+            /* Occures every time  */
             ESP_LOGI(BLE_TAG, "GATTS: READ_EVT handle=0x%04x", param->read.handle);
 
-            if (param->read.handle == svc_ctrl_char_power_handle) {
+            // "0" whole response
+            esp_gatt_rsp_t rsp;
+            memset(&rsp, 0, sizeof(rsp)); 
+
+            /* Perform action depends on handle being requested */
+            esp_gatt_status_t status = ESP_GATT_OK;
+            if (param->read.handle == svc_ctrl_char_power_handle) 
+            {
                 /* Char "Power" was read */
                 ESP_LOGI(BLE_TAG, "Power value: %d", power_value);
-
-                esp_gatt_rsp_t rsp;
-                memset(&rsp, 0, sizeof(rsp)); 
 
                 rsp.attr_value.handle = param->read.handle;
                 rsp.attr_value.len = 2;
                 rsp.attr_value.value[0] = (uint8_t)(power_value & 0xFF);
                 rsp.attr_value.value[1] = (uint8_t)((power_value >> 8) & 0xFF);
-
-                esp_ble_gatts_send_response(
-                    gatts_if,
-                    param->read.conn_id,
-                    param->read.trans_id,
-                    ESP_GATT_OK,
-                    &rsp
-                );
             } 
+            else if (param->write.handle == svc_ctrl_char_stearing_handle)
+            {
+                /* Char "Stearing" was read */
+                uint16_t stearing = platform_stearing_get();
+                ESP_LOGI(BLE_TAG, "Stearing value: %d", stearing);
+
+                rsp.attr_value.len = 2;
+                rsp.attr_value.value[0] = (uint8_t)(stearing & 0xFF);
+                rsp.attr_value.value[1] = (uint8_t)((stearing >> 8) & 0xFF);
+            }
             else 
             {
-                /* Anything else - default response */
-                esp_ble_gatts_send_response(
-                    gatts_if,
-                    param->read.conn_id,
-                    param->read.trans_id,
-                    ESP_GATT_READ_NOT_PERMIT,
-                    NULL
-                );
+                /* Default response */
+                status = ESP_GATT_READ_NOT_PERMIT;
             }
+
+            /* Return response if needed */
+            esp_ble_gatts_send_response(
+                gatts_if,
+                param->read.conn_id,
+                param->read.trans_id,
+                status,
+                &rsp
+            );
             break;
         }
 
@@ -359,34 +376,37 @@ static void gatts_event_handler(esp_gatts_cb_event_t event,
 
             ESP_LOGI(BLE_TAG, "GATTS: WRITE_EVT handle=0x%04x, len=%d", param->write.handle, param->write.len);
 
+            /* Perform action depends on handle being requested */
+            esp_gatt_status_t status = ESP_GATT_OK;
             if (param->write.handle == svc_ctrl_char_power_handle) {
                 /* Char "Power" was written */
                 power_value = *((uint16_t *)&param->write.value[0]);
                 ESP_LOGI(BLE_TAG, "Power value: %d", power_value);
+            }
+            else if (param->write.handle == svc_ctrl_char_stearing_handle)
+            {
+                /* Char "Stearing" was written */
+                uint16_t stearing = *((uint16_t *)&param->write.value[0]);
+                ESP_LOGI(BLE_TAG, "Stearing angle in deg: %d", stearing);
 
-                if (param->write.need_rsp) {
-                    esp_ble_gatts_send_response(
-                        gatts_if,
-                        param->write.conn_id,
-                        param->write.trans_id,
-                        ESP_GATT_OK,
-                        NULL
-                    );
-                }
-
-            } 
+                platform_stearing_set(stearing);
+            }
             else {
                 /* Unknown handle written. */
-                if (param->write.need_rsp) {
-                    esp_ble_gatts_send_response(
-                        gatts_if,
-                        param->write.conn_id,
-                        param->write.trans_id,
-                        ESP_GATT_WRITE_NOT_PERMIT,
-                        NULL
-                    );
-                }
+                status = ESP_GATT_WRITE_NOT_PERMIT;
             }
+            
+            /* Return response if needed */
+            if (param->write.need_rsp) {
+                esp_ble_gatts_send_response(
+                    gatts_if,
+                    param->write.conn_id,
+                    param->write.trans_id,
+                    status,
+                    NULL
+                );
+            }
+
             break;
         }
 
